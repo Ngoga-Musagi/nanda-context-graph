@@ -1,0 +1,9 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+neo4j_data/
+.env
+.git/
