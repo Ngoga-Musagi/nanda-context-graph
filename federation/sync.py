@@ -5,6 +5,10 @@ Phase 5B (future): CRDT vector clocks on Decision nodes.
 
 Each NCG instance exposes GET /federation/traces?since_ms=<epoch_ms>
 which returns DecisionTrace JSON for traces newer than since_ms.
+
+Jurisdiction-gated sync: traces with a `jurisdiction` field are only
+synced to peers whose declared jurisdiction matches. EU traces are
+blocked from non-EU/EEA peers per GDPR data residency requirements.
 """
 
 import logging
@@ -20,6 +24,31 @@ from store.neo4j_adapter import Neo4jAdapter
 
 logger = logging.getLogger("ncg.federation")
 
+# EU/EEA jurisdictions that are considered equivalent for data residency
+_EU_EEA_JURISDICTIONS = {"EU", "EEA"}
+
+
+def jurisdiction_filter(trace: dict, peer_jurisdiction: str | None) -> bool:
+    """Determine whether a trace may be synced to a peer based on jurisdiction.
+
+    Rules:
+    - No jurisdiction on trace → allow sync to all peers.
+    - peer_jurisdiction is None or "global" → allow sync.
+    - Exact match → allow.
+    - EU trace to non-EU/EEA peer → block (GDPR data residency).
+    - Otherwise → block.
+    """
+    trace_jurisdiction = trace.get("jurisdiction")
+    if not trace_jurisdiction:
+        return True
+    if not peer_jurisdiction or peer_jurisdiction.lower() == "global":
+        return True
+    if trace_jurisdiction == peer_jurisdiction:
+        return True
+    if trace_jurisdiction in _EU_EEA_JURISDICTIONS and peer_jurisdiction not in _EU_EEA_JURISDICTIONS:
+        return False
+    return False
+
 
 @dataclass
 class FederationPeer:
@@ -27,6 +56,7 @@ class FederationPeer:
 
     url: str
     name: str = ""
+    jurisdiction: str | None = None
     last_sync_ms: int = 0
     healthy: bool = True
     _consecutive_failures: int = field(default=0, repr=False)
@@ -37,10 +67,17 @@ class FederationPeer:
             self.name = self.url
 
 
-def push_trace(trace_id: str, peer_url: str, graph: Neo4jAdapter) -> bool:
+def push_trace(
+    trace_id: str,
+    peer_url: str,
+    graph: Neo4jAdapter,
+    peer_jurisdiction: str | None = None,
+) -> bool:
     """Send a single trace to another NCG instance via its ingest endpoint.
 
     Returns True if the remote accepted (2xx), False otherwise.
+    Respects jurisdiction_filter: if the trace's jurisdiction does not match
+    the peer's, the push is silently skipped (returns False).
     """
     peer_url = peer_url.rstrip("/")
     trace_data = graph.get_trace(trace_id)
@@ -48,7 +85,14 @@ def push_trace(trace_id: str, peer_url: str, graph: Neo4jAdapter) -> bool:
         logger.warning("push_trace: trace %s not found locally", trace_id)
         return False
 
-    # Reconstruct full trace with steps for the remote ingest API
+    if not jurisdiction_filter(trace_data, peer_jurisdiction):
+        logger.info(
+            "push_trace: trace %s withheld from %s (jurisdiction mismatch)",
+            trace_id,
+            peer_url,
+        )
+        return False
+
     try:
         resp = httpx.post(
             f"{peer_url}/ingest/trace",
@@ -68,9 +112,15 @@ def push_trace(trace_id: str, peer_url: str, graph: Neo4jAdapter) -> bool:
 
 
 def pull_recent(
-    peer_url: str, since_ms: int, graph: Neo4jAdapter
+    peer_url: str,
+    since_ms: int,
+    graph: Neo4jAdapter,
+    local_jurisdiction: str | None = None,
 ) -> int:
     """Pull traces from a peer since a timestamp and write them locally.
+
+    Applies jurisdiction_filter on each incoming trace: traces whose jurisdiction
+    does not match our local_jurisdiction are skipped.
 
     Returns the number of traces written.
     """
@@ -93,6 +143,9 @@ def pull_recent(
 
     written = 0
     for raw in traces:
+        if not jurisdiction_filter(raw, local_jurisdiction):
+            logger.debug("pull_recent: skipping trace (jurisdiction mismatch)")
+            continue
         try:
             trace = DecisionTrace(**raw)
             graph.write_trace(trace)  # MERGE makes this idempotent

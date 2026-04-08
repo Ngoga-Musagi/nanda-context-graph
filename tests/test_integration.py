@@ -160,6 +160,26 @@ class TestQueryAPI:
         assert resp.status_code == 200
         assert resp.json()["status"] == "not_implemented"
 
+    def test_trust_score_with_traces(self, traces, query_client):
+        resp = query_client.get(f"/api/v1/agent/{AGENT_ID}/trust-score")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_id"] == AGENT_ID
+        assert "bts" in data
+        assert 0.0 <= data["bts"] <= 1.0
+        assert "authorization_level" in data
+        assert "sub_scores" in data
+        assert data["trace_count"] == 3
+        assert "computed_at" in data
+
+    def test_trust_score_no_traces(self, traces, query_client):
+        resp = query_client.get("/api/v1/agent/nonexistent-agent/trust-score")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["bts"] == 0.40
+        assert data["authorization_level"] == "restricted"
+        assert data["trace_count"] == 0
+
     def test_health(self, query_client):
         resp = query_client.get("/health")
         assert resp.status_code == 200

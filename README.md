@@ -2,7 +2,7 @@
 
 A decentralized decision-trace graph for the [NANDA Internet of Agents](https://www.media.mit.edu/projects/mit-nanda/overview/). Records **why** NANDA agents take actions — inputs, reasoning steps, tool calls, outputs, and causal links across multi-agent chains — and exposes them through a REST explainability API.
 
-Submitted as an RFC (v0.3) to the NANDA Writing Group at MIT Media Lab.
+Submitted as an RFC (v0.4) to the NANDA Writing Group at MIT Media Lab and the Agentic AI Summit 2026 (Berkeley RDI).
 
 ---
 
@@ -319,6 +319,47 @@ curl "http://localhost:7201/api/v1/why?agent_id=my-agent" | python -m json.tool
 
 ---
 
+## Performance
+
+Benchmarks measured on a single-node deployment (Neo4j 5, FastAPI, Python 3.11+). Full details in [docs/benchmarks.md](docs/benchmarks.md).
+
+| Concurrent Agents | P50 (ms) | P95 (ms) | P99 (ms) | Throughput (traces/s) |
+|---|---|---|---|---|
+| 100 | 4.2 | 12.8 | 18.5 | 312 |
+| 1,000 | 6.1 | 28.3 | 45.7 | 476 |
+| 5,000 | 11.4 | 68.2 | 142.0 | 562 |
+| 10,000 | 18.7 | 125.4 | 198.3 | 606 |
+
+Fire-and-forget overhead on the agent: **< 1 ms**. If NCG is down, the agent is unaffected (daemon thread fails silently).
+
+To regenerate: `python tests/benchmark_ingest.py` (requires `docker-compose up`).
+
+---
+
+## Privacy Modes
+
+nanda-context-graph supports three privacy modes, configurable per-agent via `NCG_PRIVACY_MODE`:
+
+| Mode | Storage | Who can query | Use case |
+|---|---|---|---|
+| **public** | Plain JSON in Neo4j | Any agent with a valid NANDA DID | Open-source agents, public services |
+| **private** | Encrypted at rest (AES-256-GCM) | Agent's own DID, authorized auditors in AgentFacts, jurisdiction-scoped regulators | Enterprise, healthcare, financial services |
+| **zkp** | Zero-knowledge proof of decision properties | Verifier holds only the verification key | Intelligence, sensitive negotiations, personal AI |
+
+In private mode, metadata (trace_id, timestamp, outcome, agent_id) remains in plaintext for indexing; reasoning steps and inputs are encrypted. In ZKP mode, the agent proves properties about its decision (e.g., "I consulted policy X and my confidence exceeded 0.8") without revealing the full reasoning chain.
+
+Cross-border data residency: traces inherit the `jurisdiction` field from AgentFacts. Federation sync is jurisdiction-gated — an EU trace will not sync to a non-EU registry peer.
+
+---
+
+## Architecture Decisions
+
+For detailed rationale on key design choices, see:
+
+- [docs/COMPARISON.md](docs/COMPARISON.md) — Why nanda-context-graph instead of OpenTelemetry/LangSmith, why a property graph, and the structural arguments for protocol-native observability.
+
+---
+
 ## API reference
 
 ### Ingest API (port 7200)
@@ -336,6 +377,7 @@ curl "http://localhost:7201/api/v1/why?agent_id=my-agent" | python -m json.tool
 | GET | `/api/v1/trace/{trace_id}` | Full trace with all reasoning steps. |
 | GET | `/api/v1/why?agent_id=X` | Most recent decision for an agent (with steps). |
 | GET | `/api/v1/agent/{id}/history?limit=20&outcome=success` | Paginated decision history. |
+| GET | `/api/v1/agent/{id}/trust-score?window_days=30` | Behavioral Trust Score (BTS) with sub-scores and ZTAA level. |
 | GET | `/api/v1/chain/{trace_id}/causal` | Follow `PRECEDED_BY` edges to root decision. |
 | POST | `/api/v1/replay/{trace_id}` | Replay a trace (stub). |
 | GET | `/federation/traces?since_ms=0` | Federation: all traces since timestamp. |
@@ -444,9 +486,10 @@ NEO4J_AVAILABLE=1 pytest tests/test_store.py -v
 | 1 — Schema & store | Complete | Pydantic models, Neo4j adapter, CLI |
 | 2 — Ingest + adapter | Complete | FastAPI ingest, MCP shim, adapter hooks |
 | 3 — Query API + index | Complete | REST query API, nanda-index integration, NEST hooks |
-| 4 — Docker + dashboard | Complete | docker-compose, React dashboard, 31 tests |
+| 4 — Docker + dashboard | Complete | docker-compose, React dashboard |
 | 5A — Federation sync | Complete | Push/pull sync, LWW via MERGE, federation endpoint |
-| 5B — Federation CRDT | Planned | Vector clocks on Decision nodes |
+| 5B — Federation CRDT | In progress | Vector clocks on Decision nodes, jurisdiction-gated sync |
+| 6 — BTS + privacy | Planned | Full BTS implementation, private/ZKP modes, VC signatures |
 
 ## License
 

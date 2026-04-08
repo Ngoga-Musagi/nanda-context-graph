@@ -7,6 +7,7 @@ Run:
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,6 +114,22 @@ def causal_chain(trace_id: str, max_depth: int = 10):
         if not record:
             return {"trace_id": trace_id, "chain": [trace_id]}
         return {"trace_id": trace_id, "chain": record["chain"]}
+
+
+@app.get("/api/v1/agent/{agent_id}/trust-score")
+def agent_trust_score(agent_id: str, window_days: int = 30):
+    """Compute and return the Behavioral Trust Score (BTS) for an agent."""
+    graph = _get_graph()
+    result = graph.compute_behavioral_trust_score(agent_id, window_days=window_days)
+    return {
+        "agent_id": agent_id,
+        "bts": result["bts"],
+        "authorization_level": result["authorization_level"],
+        "sub_scores": result["sub_scores"],
+        "trace_count": result["trace_count"],
+        "window_days": window_days,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/api/v1/replay/{trace_id}")
