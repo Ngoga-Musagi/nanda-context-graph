@@ -1,9 +1,5 @@
 # NANDA Context Graph: A Protocol-Native Decision Trace Layer for the Internet of AI Agents — RFC and Reference Implementation
 
-**Submitted to:** Agentic AI Summit 2026
-**Hosted by:** Berkeley RDI & Responsible Decentralized Intelligence Foundation
-**Date:** August 1–2, 2026 | UC Berkeley Campus, Berkeley, CA
-
 *[Author Name(s)], [Affiliation(s)]*
 *[Email Address(es)]*
 
