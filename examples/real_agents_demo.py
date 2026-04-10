@@ -46,9 +46,9 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ──────────────────────────────────────────────────────────
-NCG_INGEST = "http://localhost:7200"
-NCG_QUERY  = "http://localhost:7201"
-INDEX_URL  = "http://localhost:6900"
+NCG_INGEST = os.getenv("NCG_INGEST_URL", "http://localhost:7200")
+NCG_QUERY  = os.getenv("NCG_GRAPH_API_URL", "http://localhost:7201")
+INDEX_URL  = os.getenv("INDEX_URL", "http://localhost:6900")
 
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not API_KEY:
@@ -420,35 +420,42 @@ def main():
             print(f"\n  Start NCG first: docker-compose up -d")
             sys.exit(1)
 
-    # Start nanda-index if not running
-    try:
-        requests.get(f"{INDEX_URL}/health", timeout=2)
-        print(f"    nanda-index: OK (already running)")
-    except:
-        print(f"    nanda-index: starting...", end="", flush=True)
-        index_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "nanda-index"))
-        index_env = os.environ.copy()
-        index_env["TEST_MODE"] = "1"
-        index_env["PORT"] = "6900"
-        index_proc = subprocess.Popen(
-            [sys.executable, "registry.py"], cwd=index_dir, env=index_env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        for _ in range(15):
-            try:
-                requests.get(f"{INDEX_URL}/health", timeout=1)
-                break
-            except:
-                time.sleep(1)
-        print(" OK")
+    # Start nanda-index if not running (optional — not needed for remote deploys)
+    skip_index = os.getenv("SKIP_INDEX", "")
+    if not skip_index:
+        try:
+            requests.get(f"{INDEX_URL}/health", timeout=2)
+            print(f"    nanda-index: OK (already running)")
+        except:
+            print(f"    nanda-index: starting...", end="", flush=True)
+            index_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "nanda-index"))
+            if os.path.exists(os.path.join(index_dir, "registry.py")):
+                index_env = os.environ.copy()
+                index_env["TEST_MODE"] = "1"
+                index_env["PORT"] = "6900"
+                index_proc = subprocess.Popen(
+                    [sys.executable, "registry.py"], cwd=index_dir, env=index_env,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                for _ in range(15):
+                    try:
+                        requests.get(f"{INDEX_URL}/health", timeout=1)
+                        break
+                    except:
+                        time.sleep(1)
+                print(" OK")
+            else:
+                print(" skipped (nanda-index not found locally)")
 
-    # Register agents
-    print("\n  Registering agents in nanda-index...")
-    for aid, handle in [(BROKER_ID, "@rental:broker"),
-                        (PRICING_ID, "@rental:pricing"),
-                        (APPROVAL_ID, "@rental:approval")]:
-        register_agent(aid, handle)
-        print(f"    Registered: {handle} ({aid})")
+        # Register agents
+        print("\n  Registering agents in nanda-index...")
+        for aid, handle in [(BROKER_ID, "@rental:broker"),
+                            (PRICING_ID, "@rental:pricing"),
+                            (APPROVAL_ID, "@rental:approval")]:
+            register_agent(aid, handle)
+            print(f"    Registered: {handle} ({aid})")
+    else:
+        print("    nanda-index: skipped (SKIP_INDEX set)")
 
     # ── Run the scenario ───────────────────────────────────────────
     user_request = (
