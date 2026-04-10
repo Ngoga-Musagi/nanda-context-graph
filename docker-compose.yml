@@ -45,3 +45,13 @@ services:
       NCG_NEO4J_PASSWORD: password
     depends_on:
       - neo4j
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        VITE_API_URL: ""
+    ports:
+      - "8080:80"
+    depends_on:
+      - ncg-api

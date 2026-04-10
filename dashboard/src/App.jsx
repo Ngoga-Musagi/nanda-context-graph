@@ -1,6 +1,8 @@
 import { useState } from "react";
 
-const API = "http://localhost:7201";
+const API = import.meta.env.VITE_API_URL || (
+  window.location.port === "5173" ? "http://localhost:7201" : ""
+);
 
 export default function App() {
   const [agentId, setAgentId] = useState("");
