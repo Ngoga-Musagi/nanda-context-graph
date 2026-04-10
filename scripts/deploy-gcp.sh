@@ -15,7 +15,10 @@
 #   3. Launches an e2-medium VM with Ubuntu 22.04
 #   4. Installs Docker, clones repo, runs docker-compose
 #   5. Waits for services to come online
-#   6. Prints the public dashboard URL
+#   6. Seeds demo data (rental-broker agents) via real_agents_demo.py
+#   7. Prints the public dashboard URL
+#
+# Requires ANTHROPIC_API_KEY (in env or .env file) for demo seeding.
 #
 # Options:
 #   --project PROJECT   GCP project ID (default: current gcloud config)
@@ -74,12 +77,12 @@ echo "  Machine:  $MACHINE_TYPE"
 echo ""
 
 # ── Step 1: Enable Compute Engine API ────────────────────────
-echo ">> [1/5] Enabling Compute Engine API..."
+echo ">> [1/6] Enabling Compute Engine API..."
 gcloud services enable compute.googleapis.com --project="$PROJECT" 2>/dev/null || true
 echo "   Done"
 
 # ── Step 2: Create firewall rule ─────────────────────────────
-echo ">> [2/5] Creating firewall rule..."
+echo ">> [2/6] Creating firewall rule..."
 if ! gcloud compute firewall-rules describe "$FIREWALL_RULE" \
   --project="$PROJECT" &>/dev/null; then
   gcloud compute firewall-rules create "$FIREWALL_RULE" \
@@ -94,7 +97,7 @@ else
 fi
 
 # ── Step 3: Check if VM already exists ───────────────────────
-echo ">> [3/5] Creating VM..."
+echo ">> [3/6] Creating VM..."
 if gcloud compute instances describe "$VM_NAME" \
   --zone="$ZONE" --project="$PROJECT" &>/dev/null; then
   echo "   VM '$VM_NAME' already exists. To redeploy, run:"
@@ -152,7 +155,7 @@ EXTERNAL_IP=$(gcloud compute instances describe "$VM_NAME" \
 echo "   External IP: $EXTERNAL_IP"
 
 # ── Step 5: Wait for services ────────────────────────────────
-echo ">> [4/5] Waiting for services to start (this takes 2-4 minutes)..."
+echo ">> [4/6] Waiting for services to start (this takes 2-4 minutes)..."
 echo "   Docker is installing and building containers on the VM."
 echo ""
 
@@ -178,9 +181,60 @@ if curl -s --connect-timeout 3 "http://$EXTERNAL_IP:8080" 2>/dev/null | grep -q 
   DASHBOARD_UP=true
 fi
 
+# ── Step 6: Seed demo data ──────────────────────────────────
+echo ">> [5/6] Seeding demo data..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEMO_SCRIPT="$SCRIPT_DIR/../examples/real_agents_demo.py"
+
+# Load .env from project root if it exists (for ANTHROPIC_API_KEY)
+ENV_FILE="$SCRIPT_DIR/../.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+# Verify Neo4j is actually accepting writes (not just API health)
+echo "   Verifying Neo4j write readiness..."
+NEO4J_READY=false
+for i in $(seq 1 12); do
+  TEST_RESP=$(curl -s -X POST "http://$EXTERNAL_IP:7200/ingest/trace" \
+    -H "Content-Type: application/json" \
+    -d '{"agent_id":"_healthcheck","inputs":{},"output":{},"outcome":"success","steps":[{"step_id":"hc","step_type":"execute","thought":"health check"}]}' 2>/dev/null)
+  if echo "$TEST_RESP" | grep -q "accepted"; then
+    sleep 3  # wait for background write to complete
+    VERIFY=$(curl -s "http://$EXTERNAL_IP:7201/api/v1/agent/_healthcheck/history" 2>/dev/null)
+    if echo "$VERIFY" | grep -q "_healthcheck"; then
+      NEO4J_READY=true
+      echo "   Neo4j writes confirmed!"
+      break
+    fi
+  fi
+  echo "   Neo4j not ready yet, retrying in 10s... ($i/12)"
+  sleep 10
+done
+
+if [ "$NEO4J_READY" = false ]; then
+  echo "   WARN: Neo4j write verification timed out. Demo seeding may fail."
+fi
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "   WARN: ANTHROPIC_API_KEY not set. Skipping demo data seeding."
+  echo "   To seed later, run:"
+  echo "     NCG_INGEST_URL=http://$EXTERNAL_IP:7200 NCG_GRAPH_API_URL=http://$EXTERNAL_IP:7201 SKIP_INDEX=1 python examples/real_agents_demo.py"
+elif [ ! -f "$DEMO_SCRIPT" ]; then
+  echo "   WARN: examples/real_agents_demo.py not found. Skipping."
+else
+  echo "   Running real_agents_demo.py against http://$EXTERNAL_IP ..."
+  NCG_INGEST_URL="http://$EXTERNAL_IP:7200" \
+  NCG_GRAPH_API_URL="http://$EXTERNAL_IP:7201" \
+  SKIP_INDEX=1 \
+  python "$DEMO_SCRIPT" && echo "   Demo data seeded!" || echo "   WARN: Demo seeding failed. You can retry manually."
+fi
+
 # ── Done ─────────────────────────────────────────────────────
 echo ""
-echo ">> [5/5] Deployment complete!"
+echo ">> [6/6] Deployment complete!"
 echo ""
 echo "========================================"
 echo "  NCG is live on Google Cloud!"

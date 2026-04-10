@@ -219,6 +219,12 @@ Open **http://localhost:5173** and:
 3. Type `rental-approval` → see policy check + precedent query + final decision
 4. Click **"View Causal Chain"** on any trace → see all 3 agents' reasoning linked together
 
+### Causal chain visualization
+
+The dashboard traces the full causal chain across all three agents — from the user's original request through broker recommendation, pricing calculation, and final approval — with every reasoning step, tool call:
+
+![NANDA Context Graph — Causal Chain](nanda-context-graph-casual-chain.png)
+
 ### View results in Neo4j
 
 Open **http://localhost:7474** (user: `neo4j`, password: `password`):
@@ -316,6 +322,44 @@ print(resp.content.text)
 curl http://localhost:7201/api/v1/agent/my-agent/history | python -m json.tool
 curl "http://localhost:7201/api/v1/why?agent_id=my-agent" | python -m json.tool
 ```
+
+---
+
+## Deployment
+
+### Google Cloud (one command)
+
+Deploy the full stack (Neo4j, Redis, Ingest API, Query API, Dashboard) to a GCP Compute Engine VM:
+
+```bash
+./scripts/deploy-gcp.sh
+```
+
+This will:
+1. Enable the Compute Engine API
+2. Create a firewall rule for ports 8080, 7200, 7201, 7474
+3. Launch an e2-medium VM with Ubuntu 22.04
+4. Install Docker, clone the repo, and run `docker compose up`
+5. Wait for all services to come online
+6. Seed demo data using `real_agents_demo.py` (requires `ANTHROPIC_API_KEY` in your environment or `.env` file)
+
+Once complete, the script prints the public dashboard URL.
+
+**Options:**
+
+```bash
+./scripts/deploy-gcp.sh --project PROJECT   # GCP project ID
+./scripts/deploy-gcp.sh --zone ZONE         # GCP zone (default: us-central1-a)
+./scripts/deploy-gcp.sh --machine TYPE      # Machine type (default: e2-medium)
+./scripts/deploy-gcp.sh --teardown          # Delete the VM and firewall rule
+```
+
+**Prerequisites:** `gcloud` CLI installed and authenticated (`gcloud auth login`), a GCP project set (`gcloud config set project YOUR_PROJECT`).
+
+### Other deployment options
+
+- **AWS EC2:** `./scripts/deploy-aws.sh` — similar one-command deployment to AWS
+- **Netlify (dashboard only):** `./scripts/deploy-netlify.sh YOUR_BACKEND_IP` — deploys the React dashboard to Netlify with API proxying to your backend VM
 
 ---
 
